@@ -1,0 +1,2051 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Valentine Sprite Game</title>
+  <style>
+    body { margin: 0; background: #111; display: grid; place-items: center; height: 100vh; }
+    canvas { border: 2px solid #333; image-rendering: pixelated; }
+  </style>
+</head>
+<body>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
+  <script>
+    /********************************************************************
+     * CONFIG
+     ********************************************************************/
+    const GAME = Object.freeze({
+      WIDTH: 640,
+      HEIGHT: 360,
+      PLAYER_SPEED: 170,
+      POOP_FREEZE_MS: 600,
+      UI_DEPTH: 2000,
+      FX_DEPTH: 1500,
+      WORLD_DEPTH: 0
+    });
+
+    const DIRS_8 = Object.freeze([
+      'east', 'south-east', 'south', 'south-west', 'west', 'north-west', 'north', 'north-east'
+    ]);
+
+    /********************************************************************
+     * ASSET HELPERS
+     ********************************************************************/
+    function dirToKeySuffix(dir) { return dir.replace('-', '_'); }
+
+    function load8DirRotations(scene, baseKey, folderPath) {
+      for (const dir of DIRS_8) {
+        scene.load.image(`${baseKey}_${dirToKeySuffix(dir)}`, `${folderPath}/${dir}.png`);
+      }
+    }
+
+    function set8DirTexture(sprite, baseKey, dir) {
+      if (!sprite) throw new Error(`set8DirTexture: sprite is ${sprite} for baseKey=${baseKey} dir=${dir}`);
+      sprite.setTexture(`${baseKey}_${dirToKeySuffix(dir)}`);
+    }
+
+
+    function safeGenerate(scene, key, config) {
+      if (scene.textures.exists(key)) return;
+      scene.textures.generate(key, config);
+    }
+
+    /********************************************************************
+     * GENERATED (PROTOTYPE) TEXTURES
+     ********************************************************************/
+    function generatePrototypeTextures(scene) {
+      safeGenerate(scene, 'poop_proto', {
+        data: [
+          '...44...',
+          '..4444..',
+          '.444444.',
+          '..4444..',
+          '...44...'
+        ],
+        pixelWidth: 4,
+        palette: { 4: '#5b3a1e', '.': 'rgba(0,0,0,0)' }
+      });
+
+
+      safeGenerate(scene, 'evil_orb', {
+        data: [
+          '..aa..',
+          '.aaaa.',
+          'aaaaaa',
+          'aaaaaa',
+          '.aaaa.',
+          '..aa..'
+        ],
+        pixelWidth: 3,
+        palette: { a: '#7b2cff', '.': 'rgba(0,0,0,0)' }
+      });
+
+      safeGenerate(scene, 'shadow_puddle', {
+        data: [
+          '..pp..',
+          '.pppp.',
+          'pppppp',
+          'pppppp',
+          '.pppp.',
+          '..pp..'
+        ],
+        pixelWidth: 4,
+        palette: { p: '#6a2cff', '.': 'rgba(0,0,0,0)' }
+      });
+
+
+
+      safeGenerate(scene, 'snowclump', {
+        data: [
+          '..777..',
+          '.77777.',
+          '7777777',
+          '.77777.',
+          '..777..'
+        ],
+        pixelWidth: 3,
+        palette: { 7: '#d8ecff', '.': 'rgba(0,0,0,0)' }
+      });
+
+      safeGenerate(scene, 'fencepost', {
+        data: [
+          '..66..',
+          '..66..',
+          '..66..',
+          '..66..',
+          '..66..',
+          '..66..',
+          '..66..',
+          '..66..'
+        ],
+        pixelWidth: 3,
+        palette: { 6: '#6a4a32', '.': 'rgba(0,0,0,0)' }
+      });
+
+      safeGenerate(scene, 'fencerail', {
+        data: [
+          '66666666',
+          '66666666'
+        ],
+        pixelWidth: 2,
+        palette: { 6: '#6a4a32', '.': 'rgba(0,0,0,0)' }
+      });
+
+      safeGenerate(scene, 'footprint', {
+        data: [
+          '..99..',
+          '.9999.',
+          '..99..',
+          '......',
+          '..99..',
+          '.9999.',
+          '..99..'
+        ],
+        pixelWidth: 2,
+        palette: { 9: '#cfe6ff', '.': 'rgba(0,0,0,0)' }
+      });
+
+      safeGenerate(scene, 'snowflake', {
+        data: ['7'],
+        pixelWidth: 2,
+        palette: { 7: '#ffffff', '.': 'rgba(0,0,0,0)' }
+      });
+    }
+
+    /********************************************************************
+     * UI
+     ********************************************************************/
+    class DialogueUI {
+      constructor(scene) {
+        this.scene = scene;
+        this.isOpen = false;
+
+        this.bg = scene.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT - 70, GAME.WIDTH - 40, 90, 0x000000, 0.75)
+          .setVisible(false)
+          .setDepth(GAME.UI_DEPTH);
+
+        this.text = scene.add.text(40, GAME.HEIGHT - 105, '', {
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          color: '#ffffff',
+          wordWrap: { width: GAME.WIDTH - 80 }
+        }).setVisible(false).setDepth(GAME.UI_DEPTH + 1);
+      }
+
+      open(message) {
+        this.isOpen = true;
+        this.bg.setVisible(true);
+        this.text.setText(message).setVisible(true);
+      }
+
+      close() {
+        this.isOpen = false;
+        this.bg.setVisible(false);
+        this.text.setVisible(false);
+      }
+    }
+
+    class PromptUI {
+      constructor(scene, label = 'Press Space') {
+        this.scene = scene;
+        this.text = scene.add.text(0, 0, label, {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#ffffff',
+          backgroundColor: '#000000'
+        }).setPadding(6).setVisible(false).setDepth(GAME.UI_DEPTH);
+      }
+
+      show(x, y) { this.text.setPosition(x, y).setVisible(true); }
+      hide() { this.text.setVisible(false); }
+    }
+
+    /********************************************************************
+     * WORLD BUILDERS
+     ********************************************************************/
+    function buildSnowGround(scene) {
+      scene.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH, GAME.HEIGHT, 0xeaf4ff)
+        .setDepth(GAME.WORLD_DEPTH);
+
+      for (let i = 0; i < 160; i++) {
+        const x = Phaser.Math.Between(20, GAME.WIDTH - 20);
+        const y = Phaser.Math.Between(20, GAME.HEIGHT - 20);
+        const c = (i % 3 === 0) ? 0xd8ecff : 0xf7fbff;
+        scene.add.rectangle(x, y, 2, 2, c).setAlpha(0.9).setDepth(GAME.WORLD_DEPTH);
+      }
+
+      scene.add.image(110, 90, 'snowclump').setDepth(GAME.WORLD_DEPTH + 1);
+      scene.add.image(520, 115, 'snowclump').setDepth(GAME.WORLD_DEPTH + 1);
+      scene.add.image(560, 260, 'snowclump').setDepth(GAME.WORLD_DEPTH + 1);
+      scene.add.image(220, 280, 'snowclump').setDepth(GAME.WORLD_DEPTH + 1);
+
+      // Your new real art:
+      scene.add.image(330, 70, 'shed').setDepth(GAME.WORLD_DEPTH + 1);
+      scene.add.image(90, 150, 'tree').setDepth(GAME.WORLD_DEPTH + 1);
+    }
+
+    function placeFootstepTrail(scene, x1, y1, x2, y2, steps) {
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const x = Phaser.Math.Linear(x1, x2, t) + Phaser.Math.Between(-6, 6);
+        const y = Phaser.Math.Linear(y1, y2, t) + Phaser.Math.Between(-6, 6);
+        const fp = scene.add.image(x, y, 'footprint')
+          .setAlpha(0.6)
+          .setRotation(Phaser.Math.FloatBetween(-0.3, 0.3))
+          .setDepth(GAME.WORLD_DEPTH + 1);
+        fp.x += (i % 2 === 0) ? -5 : 5;
+      }
+    }
+
+    function buildFootsteps(scene) {
+      placeFootstepTrail(scene, 260, 300, 520, 210, 10);
+      placeFootstepTrail(scene, 140, 260, 260, 170, 7);
+      placeFootstepTrail(scene, 500, 330, 420, 250, 6);
+    }
+
+    function buildFence(scene, opts = {}) {
+      // Move the fence DOWN so the instruction text never overlaps it.
+      const topY = (opts.topY ?? 40);
+      const bottomY = (opts.bottomY ?? (GAME.HEIGHT - 18));
+      const leftX = (opts.leftX ?? 18);
+      const rightX = (opts.rightX ?? (GAME.WIDTH - 18));
+
+      scene.add.image(GAME.WIDTH / 2, topY, 'fencerail').setScale(40, 1).setDepth(GAME.WORLD_DEPTH + 2);
+      scene.add.image(GAME.WIDTH / 2, bottomY, 'fencerail').setScale(40, 1).setDepth(GAME.WORLD_DEPTH + 2);
+      scene.add.image(leftX, GAME.HEIGHT / 2, 'fencerail').setAngle(90).setScale(22, 1).setDepth(GAME.WORLD_DEPTH + 2);
+      scene.add.image(rightX, GAME.HEIGHT / 2, 'fencerail').setAngle(90).setScale(22, 1).setDepth(GAME.WORLD_DEPTH + 2);
+
+      for (let x = 30; x <= GAME.WIDTH - 30; x += 60) {
+        scene.add.image(x, topY, 'fencepost').setDepth(GAME.WORLD_DEPTH + 3);
+        scene.add.image(x, bottomY, 'fencepost').setDepth(GAME.WORLD_DEPTH + 3);
+      }
+      for (let y = 40; y <= GAME.HEIGHT - 40; y += 60) {
+        scene.add.image(leftX, y, 'fencepost').setDepth(GAME.WORLD_DEPTH + 3);
+        scene.add.image(rightX, y, 'fencepost').setDepth(GAME.WORLD_DEPTH + 3);
+      }
+
+      // Gate marker (bottom)
+      scene.add.rectangle(GAME.WIDTH / 2, bottomY, 90, 8, 0xeaf4ff).setAlpha(1).setDepth(GAME.WORLD_DEPTH + 2);
+      scene.add.text(GAME.WIDTH / 2 - 30, GAME.HEIGHT - 38, 'GATE', {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#6a4a32'
+      }).setAlpha(0.75).setDepth(GAME.WORLD_DEPTH + 4);
+
+      return { topY, bottomY, leftX, rightX };
+    }
+
+    function buildWorldBoundsWalls(scene, pad = 18, topPadOverride = null) {
+      // We allow a larger top wall padding to match the moved-down top fence.
+      const walls = scene.physics.add.staticGroup();
+      const topPad = (topPadOverride ?? pad);
+
+      const topWall = scene.add.rectangle(GAME.WIDTH / 2, topPad / 2, GAME.WIDTH, topPad, 0x000000, 0).setAlpha(0);
+      const bottomWall = scene.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT - pad / 2, GAME.WIDTH, pad, 0x000000, 0).setAlpha(0);
+      const leftWall = scene.add.rectangle(pad / 2, GAME.HEIGHT / 2, pad, GAME.HEIGHT, 0x000000, 0).setAlpha(0);
+      const rightWall = scene.add.rectangle(GAME.WIDTH - pad / 2, GAME.HEIGHT / 2, pad, GAME.HEIGHT, 0x000000, 0).setAlpha(0);
+
+      walls.add(topWall); walls.add(bottomWall); walls.add(leftWall); walls.add(rightWall);
+      return walls;
+    }
+
+    function startSnowfall(scene) {
+      const particles = scene.add.particles(0, 0, 'snowflake', {
+        x: { min: 0, max: GAME.WIDTH },
+        y: { min: -20, max: -5 },
+        lifespan: { min: 2500, max: 4500 },
+        speedY: { min: 20, max: 55 },
+        speedX: { min: -10, max: 10 },
+        quantity: 2,
+        frequency: 60,
+        scale: { min: 0.6, max: 1.2 },
+        alpha: { min: 0.25, max: 0.6 }
+      });
+      particles.setDepth(GAME.FX_DEPTH);
+      return particles;
+    }
+
+    /********************************************************************
+     * MOVEMENT + DIRECTION UTILS
+     ********************************************************************/
+    function get8DirFromVelocity(vx, vy) {
+      if (Math.abs(vx) < 1 && Math.abs(vy) < 1) return null;
+
+      const angle = Phaser.Math.RadToDeg(Math.atan2(vy, vx));
+      const a = (angle + 360) % 360;
+
+      if (a >= 337.5 || a < 22.5)   return 'east';
+      if (a >= 22.5  && a < 67.5)   return 'south-east';
+      if (a >= 67.5  && a < 112.5)  return 'south';
+      if (a >= 112.5 && a < 157.5)  return 'south-west';
+      if (a >= 157.5 && a < 202.5)  return 'west';
+      if (a >= 202.5 && a < 247.5)  return 'north-west';
+      if (a >= 247.5 && a < 292.5)  return 'north';
+      return 'north-east';
+    }
+
+    function applyTopDownMovement(sprite, cursors, speed) {
+      sprite.setVelocity(0);
+      if (cursors.left.isDown)  sprite.setVelocityX(-speed);
+      if (cursors.right.isDown) sprite.setVelocityX(speed);
+      if (cursors.up.isDown)    sprite.setVelocityY(-speed);
+      if (cursors.down.isDown)  sprite.setVelocityY(speed);
+      sprite.body.velocity.normalize().scale(speed);
+      return { vx: sprite.body.velocity.x, vy: sprite.body.velocity.y };
+    }
+
+    /********************************************************************
+     * GAMEPLAY: Poop hazard
+     ********************************************************************/
+    class PoopHazard {
+      constructor(scene, player, onMessage, poopTextureKey) {
+        this.scene = scene;
+        this.player = player;
+        this.onMessage = onMessage;
+
+        this.poopTextureKey = poopTextureKey || 'poop_proto';
+
+        this.poops = scene.physics.add.staticGroup();
+        this.frozenUntil = 0;
+
+        scene.physics.add.overlap(player, this.poops, this.onStepInPoop, null, this);
+      }
+
+      isFrozen(now) { return now < this.frozenUntil; }
+
+      onStepInPoop(player, poop) {
+        const now = this.scene.time.now;
+        if (now < this.frozenUntil) return;
+
+        poop.destroy();
+        this.frozenUntil = now + GAME.POOP_FREEZE_MS;
+        if (this.onMessage) this.onMessage('EWWWW. ❄️💩');
+      }
+
+      dropAwayFromPlayer(sourceX, sourceY) {
+        const vx = sourceX - this.player.x;
+        const vy = sourceY - this.player.y;
+        const len = Math.max(1, Math.hypot(vx, vy));
+        const nx = vx / len;
+        const ny = vy / len;
+
+        const behindDist = 60;
+        const sideways = Phaser.Math.Between(-30, 30);
+        const px = -ny;
+        const py = nx;
+
+        let x = sourceX + nx * behindDist + px * sideways;
+        let y = sourceY + ny * behindDist + py * sideways;
+
+        const pad = 34;
+        x = Phaser.Math.Clamp(x, pad, GAME.WIDTH - pad);
+        y = Phaser.Math.Clamp(y, pad, GAME.HEIGHT - pad);
+
+        this.poops.create(x, y, this.poopTextureKey);
+      }
+    }
+
+
+    class ShadowHazard {
+      constructor(scene, player, onMessage) {
+        this.scene = scene;
+        this.player = player;
+        this.onMessage = onMessage;
+
+        this.puddles = scene.physics.add.staticGroup();
+        this.frozenUntil = 0;
+
+        scene.physics.add.overlap(player, this.puddles, this.onStep, null, this);
+      }
+
+      isFrozen(now) { return now < this.frozenUntil; }
+
+      onStep(player, puddle) {
+        const now = this.scene.time.now;
+        if (now < this.frozenUntil) return;
+
+        puddle.destroy();
+        this.frozenUntil = now + 550;
+        if (this.onMessage) this.onMessage('Warah energy… got you. 💜');
+      }
+
+      dropAt(x, y) {
+        const pad = 30;
+        x = Phaser.Math.Clamp(x, pad, GAME.WIDTH - pad);
+        y = Phaser.Math.Clamp(y, pad, GAME.HEIGHT - pad);
+        this.puddles.create(x, y, 'shadow_puddle');
+      }
+
+      clearAll() {
+        this.puddles.clear(true, true);
+      }
+    }
+
+
+    /********************************************************************
+     * GAMEPLAY: 8-dir character
+     ********************************************************************/
+    class Character8Dir {
+      constructor(scene, physicsSprite, baseKey, initialDir = 'south') {
+        this.scene = scene;
+        this.sprite = physicsSprite;
+        this.baseKey = baseKey;
+        this.dir = initialDir;
+        set8DirTexture(this.sprite, this.baseKey, this.dir);
+      }
+      setDirection(dir) {
+        if (!dir || dir === this.dir) return;
+        this.dir = dir;
+        set8DirTexture(this.sprite, this.baseKey, dir);
+      }
+    }
+
+    /********************************************************************
+     * GAMEPLAY: Chase Controller (Zoe runs between spots)
+     ********************************************************************/
+    class ChaseController {
+      constructor(scene, chaserCharacter, targetSprite, poopHazard, options) {
+        this.scene = scene;
+        this.chaser = chaserCharacter;
+        this.target = targetSprite;
+        this.poop = poopHazard;
+
+        this.spots = options.spots || [];
+        this.triggerRadius = options.triggerRadius ?? 80;
+        this.catchRadius = options.catchRadius ?? 75;
+        this.pixelsPerSecond = options.pixelsPerSecond ?? 260;
+        this.cooldownMs = options.cooldownMs ?? 250;
+
+        this.index = 0;
+        this.isRunning = false;
+        this.cooldownUntil = 0;
+        this.caught = false;
+
+        if (this.spots.length > 0) {
+          this.chaser.sprite.setPosition(this.spots[0].x, this.spots[0].y);
+        }
+      }
+
+      isOnFinalSpot() { return this.index >= this.spots.length - 1; }
+
+      distanceToPlayer() {
+        return Phaser.Math.Distance.Between(this.target.x, this.target.y, this.chaser.sprite.x, this.chaser.sprite.y);
+      }
+
+      update() {
+        if (this.caught) return false;
+        if (this.isOnFinalSpot()) return false;
+
+        const now = this.scene.time.now;
+        if (this.isRunning) return false;
+        if (now < this.cooldownUntil) return false;
+
+        const dist = this.distanceToPlayer();
+        if (dist >= this.triggerRadius) return false;
+
+        this.poop.dropAwayFromPlayer(this.chaser.sprite.x, this.chaser.sprite.y);
+
+        const prev = { x: this.chaser.sprite.x, y: this.chaser.sprite.y };
+        this.index += 1;
+        const next = this.spots[this.index];
+
+        const dvx = next.x - prev.x;
+        const dvy = next.y - prev.y;
+        const dir = get8DirFromVelocity(dvx, dvy);
+        this.chaser.setDirection(dir);
+
+        this.isRunning = true;
+        const d = Math.max(1, Math.hypot(dvx, dvy));
+        const duration = Math.round((d / this.pixelsPerSecond) * 1000);
+
+        this.scene.tweens.add({
+          targets: this.chaser.sprite,
+          x: next.x,
+          y: next.y,
+          duration,
+          ease: 'Linear',
+          onComplete: () => {
+            this.isRunning = false;
+            this.cooldownUntil = this.scene.time.now + this.cooldownMs;
+          }
+        });
+
+        return true;
+      }
+    }
+
+    /********************************************************************
+     * GAMEPLAY: Follow Controller (Zoe follows Sarah)
+     ********************************************************************/
+    class FollowController {
+      constructor(scene, followerCharacter, leaderSprite, opts = {}) {
+        this.scene = scene;
+        this.follower = followerCharacter;
+        this.leader = leaderSprite;
+        this.speed = opts.speed ?? 155;
+        this.stopDist = opts.stopDist ?? 42;
+        this.enabled = false;
+      }
+
+      setEnabled(v) {
+        this.enabled = v;
+        if (!v) {
+          this.follower.sprite.setVelocity(0);
+        }
+      }
+
+      update() {
+        if (!this.enabled) return;
+
+        const fx = this.follower.sprite.x;
+        const fy = this.follower.sprite.y;
+        const lx = this.leader.x;
+        const ly = this.leader.y;
+
+        const dx = lx - fx;
+        const dy = ly - fy;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < this.stopDist) {
+          this.follower.sprite.setVelocity(0);
+          return;
+        }
+
+        const nx = dx / Math.max(1, dist);
+        const ny = dy / Math.max(1, dist);
+
+        this.follower.sprite.setVelocity(nx * this.speed, ny * this.speed);
+
+        const dir = get8DirFromVelocity(this.follower.sprite.body.velocity.x, this.follower.sprite.body.velocity.y);
+        this.follower.setDirection(dir);
+      }
+    }
+
+    /********************************************************************
+     * SCENE: Menu (Ahmed + Sarah + Zoe + Nori)
+     ********************************************************************/
+    class MenuScene extends Phaser.Scene {
+      constructor() { super('Menu'); }
+
+      create() {
+        // Background: tile the 256x256 image across 640x360
+        // (tileSprite is perfect for repeating textures)
+        this.bg = this.add.tileSprite(0, 0, GAME.WIDTH, GAME.HEIGHT, 'val_bg')
+          .setOrigin(0, 0);
+
+        // Optional: dark overlay to make text readable
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH, GAME.HEIGHT, 0x000000, 0.25);
+
+        // Optional floating hearts if you loaded 'heart'
+        this.hearts = [];
+        if (this.textures.exists('heart')) {
+          for (let i = 0; i < 14; i++) {
+            const h = this.add.image(
+              Phaser.Math.Between(20, GAME.WIDTH - 20),
+              Phaser.Math.Between(0, GAME.HEIGHT),
+              'heart'
+            ).setAlpha(0.55);
+
+            h.speed = Phaser.Math.FloatBetween(10, 26);
+            h.wobble = Phaser.Math.FloatBetween(0.6, 1.5);
+            h.baseX = h.x;
+            h.scale = Phaser.Math.FloatBetween(0.6, 1.0);
+            h.setScale(h.scale);
+
+            this.hearts.push(h);
+          }
+        }
+
+        // Title
+        this.add.text(GAME.WIDTH / 2, 58, "Sarah & Ahmed", {
+          fontFamily: 'monospace',
+          fontSize: '28px',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        this.add.text(GAME.WIDTH / 2, 88, "Valentine’s In Montreal 2026", {
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          color: '#ffffff'
+        }).setOrigin(0.5).setAlpha(0.9);
+
+        // // The 4 of you (tight centered group)
+        // // Layout: Zoe -> Sarah -> Ahmed -> Nori (pets facing inward)
+        // const cx = GAME.WIDTH / 2;
+        // const cy = 210;
+
+        // // Tight spacing
+        // const gap = 46;
+
+        // // Pets slightly lower feels cute (optional)
+        // const petY = cy + 16;
+
+        // // Zoe on Sarah's left, facing right toward Sarah
+        // this.add.image(cx - gap * 1.5, petY, 'zoe_east').setScale(1.0);
+
+        // // Sarah slightly left of center, facing right toward Ahmed
+        // this.add.image(cx - gap * 0.5, cy, 'sarah_south').setScale(1.0);
+
+        // // Ahmed slightly right of center, facing left toward Sarah
+        // this.add.image(cx + gap * 0.5, cy, 'ahmed_south').setScale(1.0);
+
+        // // Nori on Ahmed's right, facing left toward Ahmed
+        // this.add.image(cx + gap * 1.5, petY, 'nori_west').setScale(1.0);
+        // Buttons
+        this.startText = this.add.text(GAME.WIDTH / 2, 290, "▶ Start", {
+          fontFamily: 'monospace',
+          fontSize: '20px',
+          color: '#ffffff',
+          backgroundColor: '#000000'
+        }).setOrigin(0.5).setPadding(10).setInteractive({ useHandCursor: true });
+
+        // --- Place pairs around the Start button ---
+        // Left side: Sarah + Zoe
+        // Right side: Ahmed + Nori
+        const sx = this.startText.x;   // center of Start text (because origin is 0.5)
+        const sy = this.startText.y;
+
+        // How far away from the Start button each side sits
+        const sideOffsetX = 100;
+
+        // Spacing inside each pair
+        const pairGap = 42;
+
+        // Vertical placement relative to the Start button
+        const yMain = sy;     // people slightly above the button
+        const yPet  = yMain + 18;  // pets slightly lower
+
+        const scale = 1.05;        // adjust if you want bigger/smaller
+
+        // LEFT: Sarah + Zoe (facing inward toward button)
+        this.add.image(sx - sideOffsetX + pairGap * 0.5, yMain, 'sarah_south').setScale(scale);
+        this.add.image(sx - sideOffsetX - pairGap * 0.5, yPet,  'zoe_east').setScale(scale);
+
+        // RIGHT: Ahmed + Nori (facing inward toward button)
+        this.add.image(sx + sideOffsetX - pairGap * 0.5, yMain, 'ahmed_south').setScale(scale);
+        this.add.image(sx + sideOffsetX + pairGap * 0.5, yPet,  'nori_west').setScale(scale);
+
+
+
+        const unlocked = localStorage.getItem('val_gallery_unlocked') === '1';
+
+        this.galleryText = this.add.text(GAME.WIDTH / 2, 330, unlocked ? "Gallery" : "Gallery (unlocks after ending)", {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#ffffff'
+        }).setOrigin(0.5).setAlpha(unlocked ? 0.95 : 0.55);
+
+        if (unlocked) {
+          this.galleryText.setInteractive({ useHandCursor: true });
+          this.galleryText.on('pointerdown', () => this.scene.start('Gallery'));
+        }
+
+
+        this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+        this.startText.on('pointerdown', () => this.scene.start('Intro'));
+      }
+
+      update() {
+        // Space starts
+        if (Phaser.Input.Keyboard.JustDown(this.keySpace)) {
+          this.scene.start('Intro');
+          return;
+        }
+
+        // Animate background subtly (drift)
+        if (this.bg) {
+          this.bg.tilePositionX += 0.08;
+          this.bg.tilePositionY += 0.02;
+        }
+
+        // Float hearts
+        if (this.hearts && this.hearts.length) {
+          const t = this.time.now / 1000;
+          for (const h of this.hearts) {
+            h.y -= h.speed * (this.game.loop.delta / 1000);
+            h.x = h.baseX + Math.sin(t * h.wobble) * 8;
+
+            if (h.y < -30) {
+              h.y = GAME.HEIGHT + 30;
+              h.baseX = Phaser.Math.Between(20, GAME.WIDTH - 20);
+              h.speed = Phaser.Math.FloatBetween(10, 26);
+              h.wobble = Phaser.Math.FloatBetween(0.6, 1.5);
+            }
+          }
+        }
+      }
+    }
+
+
+    /********************************************************************
+     * SCENE: Intro Cutscene (lighter + readable pets)
+     ********************************************************************/
+    class IntroScene extends Phaser.Scene {
+      constructor() { super('Intro'); }
+
+      create() {
+        // Light background so Zoe/Nori are visible
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH, GAME.HEIGHT, 0xf6f1ff);
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH - 50, GAME.HEIGHT - 50, 0xffffff, 0.55);
+
+        // UI
+        this.dialogue = new DialogueUI(this);
+        this.prompt = new PromptUI(this, 'Press Space');
+
+        // Characters: bigger + side-facing for visibility
+        // (Scale up slightly; still pixel-friendly)
+        const cx = GAME.WIDTH / 2;
+        const cy = 170;
+
+        const gap = 60;
+        const petY = cy + 20;
+        const scale = 1.25;
+
+        // Sarah facing toward Ahmed
+        this.add.image(cx - gap * 0.5, cy, 'sarah_east').setScale(scale);
+
+        // Ahmed facing toward Sarah
+        this.add.image(cx + gap * 0.5, cy, 'ahmed_west').setScale(scale);
+
+
+        // Dialogue (single page)
+        this.dialogue.open("Okay!! Leaving for Montreal..\nJust have to make sure the pets are okay");
+
+        this.prompt.show(GAME.WIDTH - 140, GAME.HEIGHT - 42);
+
+        this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+      }
+
+      update() {
+        if (!Phaser.Input.Keyboard.JustDown(this.keySpace)) return;
+
+        this.dialogue.close();
+        this.scene.start('Level1');
+      }
+    }
+
+
+    /********************************************************************
+     * SCENE: Travel Cutscene (lighter + readable pets)
+     ********************************************************************/
+    class TravelCutscene extends Phaser.Scene {
+      constructor() { super('TravelCutscene'); }
+
+      create() {
+
+        this.cameras.main.fadeIn(450, 0, 0, 0);
+
+        // Quebec flag background (stretch to screen)
+        this.add.image(GAME.WIDTH / 2, GAME.HEIGHT / 2, 'qc_flag')
+          .setDisplaySize(GAME.WIDTH, GAME.HEIGHT);
+
+        // Optional dark overlay for readability
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH, GAME.HEIGHT, 0x000000, 0.12);
+
+        // Car starts offscreen left and drives to offscreen right
+        const car = this.add.image(-80, GAME.HEIGHT * 0.70, 'car');
+
+        // If your car is tiny or huge, you can scale it:
+        // car.setScale(1.0);
+
+        // Cute caption while driving (optional)
+        this.add.text(GAME.WIDTH / 2, 30, "Road trip to Montreal…", {
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          color: '#ffffff'
+        }).setOrigin(0.5).setAlpha(0.9);
+
+        this.tweens.add({
+          targets: car,
+          x: GAME.WIDTH + 80,
+          duration: 4200,
+          ease: 'Linear',
+          onComplete: () => {
+            this.cameras.main.fadeOut(450, 0, 0, 0);
+            this.time.delayedCall(480, () => this.scene.start('FinalKiss'));
+          }
+        });
+      }
+    }
+
+
+
+    /********************************************************************
+     * SCENE: Final Kiss Cutscene (lighter + readable pets)
+     ********************************************************************/
+    class FinalKiss extends Phaser.Scene {
+      constructor() { super('FinalKiss'); }
+
+      create() {
+
+        localStorage.setItem('val_gallery_unlocked', '1');
+
+        // Soft romantic background (simple + clean)
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH, GAME.HEIGHT, 0xf7e9f3);
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH - 60, GAME.HEIGHT - 60, 0xffffff, 0.55);
+
+        // Sarah + Ahmed (no pets)
+        const cx = GAME.WIDTH / 2;
+        const cy = GAME.HEIGHT / 2 + 10;
+
+        // Face each other
+        const sarah = this.add.image(cx - 40, cy, 'sarah_east').setScale(1.4);
+        const ahmed = this.add.image(cx + 40, cy, 'ahmed_west').setScale(1.4);
+
+        // Tiny “lean in” tween to simulate kiss
+        this.tweens.add({
+          targets: sarah,
+          x: cx - 18,
+          duration: 650,
+          ease: 'Sine.easeInOut',
+          yoyo: true,
+          hold: 700
+        });
+
+        this.tweens.add({
+          targets: ahmed,
+          x: cx + 18,
+          duration: 650,
+          ease: 'Sine.easeInOut',
+          yoyo: true,
+          hold: 700
+        });
+
+        // Heart above them (64px asset)
+        const heart = this.add.image(cx, cy - 70, 'heart64').setAlpha(0);
+
+        this.tweens.add({
+          targets: heart,
+          alpha: 1,
+          y: heart.y - 8,
+          duration: 700,
+          ease: 'Sine.easeOut',
+          yoyo: true,
+          repeat: -1
+        });
+
+        // Caption
+        this.add.text(cx, GAME.HEIGHT - 64, "Ah le sweet caress of twilight", {
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          color: '#2b2b2b'
+        }).setOrigin(0.5);
+
+        // Continue prompt
+        this.add.text(cx, GAME.HEIGHT - 28, "Press Space", {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#2b2b2b'
+        }).setOrigin(0.5).setAlpha(0.7);
+
+        this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+      }
+
+      update() {
+        if (Phaser.Input.Keyboard.JustDown(this.keySpace)) {
+          this.scene.start('EndMenu');
+        }
+      }
+    }
+
+
+    /********************************************************************
+     * SCENE: End Menu
+     ********************************************************************/    
+    class EndMenu extends Phaser.Scene {
+      constructor() { super('EndMenu'); }
+
+      create() {
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH, GAME.HEIGHT, 0x1b1630);
+
+        this.add.text(GAME.WIDTH / 2, 80, "THE END", {
+          fontFamily: 'monospace',
+          fontSize: '28px',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        const playAgain = this.add.text(GAME.WIDTH / 2, 170, "▶ Play Again", {
+          fontFamily: 'monospace',
+          fontSize: '20px',
+          color: '#ffffff',
+          backgroundColor: '#000000'
+        }).setOrigin(0.5).setPadding(10).setInteractive({ useHandCursor: true });
+
+        const gallery = this.add.text(GAME.WIDTH / 2, 230, "Gallery", {
+          fontFamily: 'monospace',
+          fontSize: '20px',
+          color: '#ffffff',
+          backgroundColor: '#000000'
+        }).setOrigin(0.5).setPadding(10).setInteractive({ useHandCursor: true });
+
+        gallery.on('pointerdown', () => this.scene.start('Gallery'));
+
+
+        playAgain.on('pointerdown', () => {
+          // back to menu or intro — your call
+          this.scene.start('Menu');
+        });
+      }
+    }
+  
+    /********************************************************************
+     * SCENE: End Menu
+     ********************************************************************/  
+    class GalleryScene extends Phaser.Scene {
+      constructor() { super('Gallery'); }
+
+      preload() {
+        // Try manifest first
+        this.load.json('gallery_manifest', 'assets/gallery/manifest.json');
+      }
+
+      create() {
+        this.add.rectangle(GAME.WIDTH/2, GAME.HEIGHT/2, GAME.WIDTH, GAME.HEIGHT, 0x0f0c1a);
+
+        this.title = this.add.text(GAME.WIDTH/2, 26, 'Gallery', {
+          fontFamily: 'monospace',
+          fontSize: '20px',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        this.hint = this.add.text(GAME.WIDTH/2, GAME.HEIGHT - 18, '← / → to navigate • Esc to return', {
+          fontFamily: 'monospace',
+          fontSize: '12px',
+          color: '#ffffff'
+        }).setOrigin(0.5).setAlpha(0.75);
+
+        // Controls
+        this.keys = this.input.keyboard.addKeys({
+          left: Phaser.Input.Keyboard.KeyCodes.LEFT,
+          right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+          esc: Phaser.Input.Keyboard.KeyCodes.ESC
+        });
+
+        // Get list of images
+        const manifest = this.cache.json.get('gallery_manifest');
+
+        // Fallback: hardcoded list (use this if you don't want a manifest)
+        // Put your real filenames here if you skip manifest.json
+        const fallbackList = [
+          // '01.jpg',
+          // '02.jpg'
+        ];
+
+        this.files = (manifest && manifest.images && manifest.images.length)
+          ? manifest.images
+          : fallbackList;
+
+        if (!this.files.length) {
+          this.add.text(GAME.WIDTH/2, GAME.HEIGHT/2, 'No gallery images found.\nAdd assets/gallery/manifest.json', {
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            color: '#ffffff',
+            align: 'center'
+          }).setOrigin(0.5).setAlpha(0.9);
+          return;
+        }
+
+        // Load all images listed (now that we know filenames)
+        // We do a second-stage loader: add files, then start them.
+        this.files.forEach((fname, i) => {
+          const key = `g_${i}`;
+          this.load.image(key, `assets/gallery/${fname}`);
+        });
+
+        this.load.once('complete', () => {
+          this.index = 0;
+          this.showImage(0);
+          this.createUIButtons();
+        });
+
+        this.load.start();
+      }
+
+      createUIButtons() {
+        // Optional clickable buttons
+        const btnStyle = {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#ffffff',
+          backgroundColor: '#000000'
+        };
+
+        this.btnPrev = this.add.text(22, GAME.HEIGHT/2, '◀', btnStyle).setPadding(8).setOrigin(0, 0.5)
+          .setInteractive({ useHandCursor: true }).setAlpha(0.8);
+        this.btnNext = this.add.text(GAME.WIDTH - 22, GAME.HEIGHT/2, '▶', btnStyle).setPadding(8).setOrigin(1, 0.5)
+          .setInteractive({ useHandCursor: true }).setAlpha(0.8);
+
+        this.btnPrev.on('pointerdown', () => this.showImage(this.index - 1));
+        this.btnNext.on('pointerdown', () => this.showImage(this.index + 1));
+      }
+
+      showImage(newIndex) {
+        if (this.imageObj) this.imageObj.destroy();
+
+        // wrap
+        const n = this.files.length;
+        this.index = (newIndex % n + n) % n;
+
+        const key = `g_${this.index}`;
+
+        this.imageObj = this.add.image(GAME.WIDTH/2, GAME.HEIGHT/2 + 10, key);
+
+        // Fit-to-screen (no cropping) with padding
+        const pad = 44;
+        const maxW = GAME.WIDTH - pad * 2;
+        const maxH = GAME.HEIGHT - pad * 2;
+
+        const scale = Math.min(
+          maxW / this.imageObj.width,
+          maxH / this.imageObj.height
+        );
+
+        this.imageObj.setScale(scale).setAlpha(0);
+
+        // nice fade in
+        this.tweens.add({
+          targets: this.imageObj,
+          alpha: 1,
+          duration: 180,
+          ease: 'Linear'
+        });
+
+        // counter
+        if (!this.counter) {
+          this.counter = this.add.text(GAME.WIDTH/2, 52, '', {
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            color: '#ffffff'
+          }).setOrigin(0.5).setAlpha(0.8);
+        }
+        this.counter.setText(`${this.index + 1} / ${this.files.length}`);
+      }
+
+      update() {
+        if (!this.files || !this.files.length) return;
+
+        if (Phaser.Input.Keyboard.JustDown(this.keys.left))  this.showImage(this.index - 1);
+        if (Phaser.Input.Keyboard.JustDown(this.keys.right)) this.showImage(this.index + 1);
+
+        if (Phaser.Input.Keyboard.JustDown(this.keys.esc)) {
+          // Return somewhere sensible
+          // If you prefer: this.scene.start('Menu');
+          this.scene.start('EndMenu');
+        }
+      }
+    }
+
+
+
+
+
+    /********************************************************************
+     * SCENE: Boot
+     ********************************************************************/
+    class BootScene extends Phaser.Scene {
+      constructor() { super('Boot'); }
+
+      preload() {
+        // Characters
+        load8DirRotations(this, 'sarah', 'assets/sarah/rotations');
+        load8DirRotations(this, 'zoe', 'assets/zoe/rotations');
+        load8DirRotations(this, 'nori', 'assets/nori/rotations');
+        load8DirRotations(this, 'tuxedocat', 'assets/tuxedocat/rotations');
+        load8DirRotations(this, 'ahmed', 'assets/ahmed/rotations');
+        load8DirRotations(this, 'warah', 'assets/warahsylie/rotations');
+
+
+
+        // Real environment art you added
+        this.load.image('shed', 'assets/shed/shed.png');
+        this.load.image('tree', 'assets/tree/tree.png');
+        this.load.image('val_bg', 'assets/background/background3.png');
+        this.load.image('heart_pickup', 'assets/heart16/heart.png'); // or heart_64.png
+        this.load.image('car', 'assets/car.png');
+        this.load.image('qc_flag', 'assets/qc.png');
+        this.load.image('heart64', 'assets/heart64/heart64.png');
+
+
+
+
+        // Prototype art
+        generatePrototypeTextures(this);
+      }
+
+      create() {
+        // Attempt to create a poop emoji texture. If the platform can't render it, we fall back.
+        // (This is best-effort; emoji appearance depends on OS/font support.)
+        try {
+          const emoji = this.add.text(-1000, -1000, '💩', {
+            fontFamily: 'Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, sans-serif',
+            fontSize: '28px'
+          });
+          emoji.setVisible(true);
+
+          // Render to texture
+          const rt = this.add.renderTexture(0, 0, 32, 32).setVisible(false);
+          rt.draw(emoji, 0, 0);
+          rt.saveTexture('poop_emoji');
+          rt.destroy();
+          emoji.destroy();
+        } catch (e) {
+          // ignore and use poop_proto
+        }
+
+        this.scene.start('Menu');
+      }
+    }
+
+
+
+    /********************************************************************
+     * SCENE: Level3 — Heart Capture (Sarah vs Warah Sylie)
+     ********************************************************************/
+    class Level3 extends Phaser.Scene {
+      constructor() { super('Level3'); }
+
+      create() {
+        // Background: light + readable
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH, GAME.HEIGHT, 0xf6f1ff);
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH - 40, GAME.HEIGHT - 40, 0xffffff, 0.55);
+
+        // UI
+        this.dialogue = new DialogueUI(this);
+        this.prompt = new PromptUI(this, 'Press Space');
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+        this.goal = 5;
+        this.sarahScore = 0;
+        this.warahScore = 0;
+
+        this.hud = this.add.text(12, 10, this.getHudText(), {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#2b2b2b'
+        }).setDepth(GAME.UI_DEPTH);
+
+        this.hintText = this.add.text(12, 28, 'Collect 5 hearts before Warah does!', {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#2b2b2b'
+        }).setDepth(GAME.UI_DEPTH);
+
+        // Walls / bounds
+        this.walls = buildWorldBoundsWalls(this, 18);
+
+        // Sarah
+        const sarahSprite = this.physics.add.sprite(GAME.WIDTH / 2, GAME.HEIGHT - 60, 'sarah_south');
+        sarahSprite.setCollideWorldBounds(true);
+        this.physics.add.collider(sarahSprite, this.walls);
+        this.sarah = new Character8Dir(this, sarahSprite, 'sarah', 'south');
+
+        this.startPos = { x: GAME.WIDTH / 2, y: GAME.HEIGHT - 60 };
+        
+        // Zoe follows Sarah
+        const zoeSprite = this.physics.add.sprite(GAME.WIDTH / 2 - 36, GAME.HEIGHT - 40, 'zoe_south');
+        zoeSprite.body.setAllowGravity(false);
+        zoeSprite.setImmovable(true);
+        this.zoe = new Character8Dir(this, zoeSprite, 'zoe', 'south');
+
+        this.followZoe = new FollowController(this, this.zoe, this.sarah.sprite, {
+          speed: 150,
+          stopDist: 44
+        });
+        this.followZoe.setEnabled(true);
+
+        // Nori follows Zoe
+        const noriSprite = this.physics.add.sprite(GAME.WIDTH / 2 - 72, GAME.HEIGHT - 35, 'nori_south');
+        noriSprite.body.setAllowGravity(false);
+        noriSprite.setImmovable(true);
+        this.nori = new Character8Dir(this, noriSprite, 'nori', 'south');
+
+        this.followNori = new FollowController(this, this.nori, this.zoe.sprite, {
+          speed: 140,
+          stopDist: 52
+        });
+        this.followNori.setEnabled(true);
+
+        // Warah Sylie
+        // Option A: 8-dir rotations
+        let warahSprite;
+        if (this.textures.exists('warah_south')) {
+          warahSprite = this.physics.add.sprite(GAME.WIDTH / 2, 70, 'warah_south');
+          this.warah = new Character8Dir(this, warahSprite, 'warah', 'south');
+          this.warahHasDirs = true;
+        } else {
+          // Option B: single sprite key 'warah'
+          warahSprite = this.physics.add.sprite(GAME.WIDTH / 2, 70, 'warah');
+          this.warah = { sprite: warahSprite, setDirection: () => {} };
+          this.warahHasDirs = false;
+        }
+
+        warahSprite.body.setAllowGravity(false);
+        warahSprite.setCollideWorldBounds(true);
+        this.physics.add.collider(warahSprite, this.walls);
+
+        // Warah movement tuning
+        this.warahSpeed = 120;        // tweak: 140 easy / 180 harder
+        this.warahRepathMs = 260;     // how often warah updates chase direction
+        this.nextRepathAt = 0;
+
+        // Heart pickup
+        this.heart = this.physics.add.sprite(-999, -999, 'heart_pickup');
+        this.heart.body.setAllowGravity(false);
+        this.heart.setImmovable(true);
+
+        // Overlaps: who grabs the heart?
+        this.physics.add.overlap(this.sarah.sprite, this.heart, () => this.onHeartCollected('sarah'));
+        this.physics.add.overlap(this.warah.sprite, this.heart, () => this.onHeartCollected('warah'));
+
+        // Cooldowns to prevent double-collect on the same frame
+        this.heartLockedUntil = 0;
+
+        // Spawn the first heart
+        this.spawnHeart();
+
+        // Intro
+        this.activePlay = false;
+        this.dialogue.open("Warah Sylie: Not so fast.");
+        this.time.delayedCall(1100, () => {
+          this.dialogue.open("Sarah: ...what are you doing?\nWarah Sylie: Heart capture. Winner goes to Montreal.");
+        });
+        this.time.delayedCall(2400, () => {
+          this.dialogue.close();
+          this.activePlay = true;
+        });
+      }
+
+      getHudText() {
+        // Cute scoreboard
+        const s = '♥'.repeat(this.sarahScore) + '·'.repeat(Math.max(0, this.goal - this.sarahScore));
+        const w = '♥'.repeat(this.warahScore) + '·'.repeat(Math.max(0, this.goal - this.warahScore));
+        return `Sarah: ${s}   Warah: ${w}`;
+      }
+
+      spawnHeart() {
+        // Keep heart away from edges and avoid spawning right on top of players
+        const pad = 44;
+
+        const tries = 20;
+        for (let i = 0; i < tries; i++) {
+          const x = Phaser.Math.Between(pad, GAME.WIDTH - pad);
+          const y = Phaser.Math.Between(pad, GAME.HEIGHT - pad);
+
+          const dSarah = Phaser.Math.Distance.Between(x, y, this.sarah.sprite.x, this.sarah.sprite.y);
+          const dWarah = Phaser.Math.Distance.Between(x, y, this.warah.sprite.x, this.warah.sprite.y);
+
+          if (dSarah > 90 && dWarah > 90) {
+            this.heart.setPosition(x, y);
+            this.heart.setVelocity(0);
+            return;
+          }
+        }
+
+        // fallback if unlucky
+        this.heart.setPosition(GAME.WIDTH / 2, GAME.HEIGHT / 2);
+      }
+
+      onHeartCollected(who) {
+        const now = this.time.now;
+        if (now < this.heartLockedUntil) return;
+        this.heartLockedUntil = now + 220;
+
+        if (who === 'sarah') {
+          this.sarahScore += 1;
+          this.hintText.setText('Sarah got a heart! 💖');
+        } else {
+          this.warahScore += 1;
+          this.hintText.setText('Warah stole it! 😈');
+          // Tiny taunt freeze (doesn't punish, just adds flavor)
+          this.activePlay = false;
+          this.time.delayedCall(450, () => { this.activePlay = true; });
+        }
+
+        this.hud.setText(this.getHudText());
+
+        // win check
+        if (this.sarahScore >= this.goal) {
+          this.winScene(true);
+          return;
+        }
+        if (this.warahScore >= this.goal) {
+          this.winScene(false);
+          return;
+        }
+
+        // respawn heart quickly
+        this.time.delayedCall(220, () => this.spawnHeart());
+      }
+
+      winScene(sarahWins) {
+        this.activePlay = false;
+        this.sarah.sprite.setVelocity(0);
+        this.warah.sprite.setVelocity(0);
+
+        if (!sarahWins) {
+          this.dialogue.open("Warah Sylie: I win.\nSarah: NOOO.\nWarah Sylie: Try again.");
+          this.time.delayedCall(3000, () => this.scene.restart());
+          return;
+        }
+
+        // Sarah wins
+        this.dialogue.open("Warah Sylie: Ugh. Fine.\nGo to Montreal.");
+        this.time.delayedCall(3000, () => {
+          this.dialogue.close();
+          this.startCarExitSequence();
+        });
+      }
+
+
+      update() {
+        const now = this.time.now;
+
+        if (this.dialogue.isOpen) {
+          this.sarah.sprite.setVelocity(0);
+          this.warah.sprite.setVelocity(0);
+          this.prompt.hide();
+          // followers still animate nicely
+          this.followZoe.update();
+          this.followNori.update();
+          return;
+        }
+
+        // Sarah movement
+        if (this.activePlay) {
+          const { vx, vy } = applyTopDownMovement(this.sarah.sprite, this.cursors, GAME.PLAYER_SPEED);
+          this.sarah.setDirection(get8DirFromVelocity(vx, vy));
+        } else {
+          this.sarah.sprite.setVelocity(0);
+        }
+
+        // Followers
+        this.followZoe.update();
+        this.followNori.update();
+
+        // Warah chases heart (simple chase steering)
+        if (this.activePlay) {
+          if (now >= this.nextRepathAt) {
+            this.nextRepathAt = now + this.warahRepathMs;
+
+            const dx = this.heart.x - this.warah.sprite.x;
+            const dy = this.heart.y - this.warah.sprite.y;
+            const dist = Math.max(1, Math.hypot(dx, dy));
+            const nx = dx / dist;
+            const ny = dy / dist;
+
+            this.warah.sprite.setVelocity(nx * this.warahSpeed, ny * this.warahSpeed);
+
+            if (this.warahHasDirs) {
+              const dir = get8DirFromVelocity(this.warah.sprite.body.velocity.x, this.warah.sprite.body.velocity.y);
+              if (dir) this.warah.setDirection(dir);
+            }
+          }
+        } else {
+          this.warah.sprite.setVelocity(0);
+        }
+
+        // Optional: little “sparkle” prompt if Sarah is near heart (fun feedback)
+        const d = Phaser.Math.Distance.Between(this.sarah.sprite.x, this.sarah.sprite.y, this.heart.x, this.heart.y);
+        if (d < 70 && this.activePlay) {
+          this.prompt.show(this.heart.x - 28, this.heart.y - 50);
+        } else {
+          this.prompt.hide();
+        }
+      }
+
+
+      startCarExitSequence() {
+        this.activePlay = true;
+        // Respawn party at start so nobody is already on the car
+        this.sarah.sprite.setPosition(this.startPos.x, this.startPos.y);
+        this.sarah.sprite.setVelocity(0);
+
+        // Keep followers close behind
+        this.zoe.sprite.setPosition(this.startPos.x - 36, this.startPos.y + 16);
+        this.zoe.sprite.setVelocity(0);
+
+        this.nori.sprite.setPosition(this.startPos.x - 72, this.startPos.y + 22);
+        this.nori.sprite.setVelocity(0);
+
+        this.sarah.setDirection('south');
+        this.zoe.setDirection('south');
+        this.nori.setDirection('south');
+
+        // Spawn car at one end (left side)
+        const carX = 80;
+        const carY = 80;
+
+        this.car = this.physics.add.sprite(carX, carY, 'car');
+        this.car.body.setAllowGravity(false);
+        this.car.setImmovable(true);
+
+
+
+        // Tighten car hitbox a bit (optional, doesn't change visual size)
+        if (this.car.body) {
+          const bw = Math.floor(this.car.width * 0.5);
+          const bh = Math.floor(this.car.height * 0.5);
+          this.car.body.setSize(bw, bh, true);
+        }
+
+        this.hintText.setText('Get in the car! ▶');
+
+        // Make heart disappear so it doesn't distract
+        if (this.heart) this.heart.setPosition(-999, -999);
+
+        // When Sarah touches the car, go to the travel cutscene
+        this.physics.add.overlap(this.sarah.sprite, this.car, () => {
+          this.enterCarTransition();
+
+        });
+      }
+
+      enterCarTransition() {
+        // Stop movement so it feels like a moment
+        this.activePlay = false;
+        this.sarah.sprite.setVelocity(0);
+        this.followZoe.setEnabled(false);
+        this.followNori.setEnabled(false);
+
+        if (this.car && this.car.body) this.car.body.enable = false;
+
+        // Optional: tiny "hop" into car
+        this.tweens.add({
+          targets: this.sarah.sprite,
+          alpha: 0,
+          duration: 250,
+          ease: 'Linear'
+        });
+
+        // Fade out, then go to travel
+        this.cameras.main.fadeOut(450, 0, 0, 0);
+
+        this.time.delayedCall(480, () => {
+          this.scene.start('TravelCutscene');
+        });
+      }
+
+    }
+
+
+
+
+    /********************************************************************
+     * SCENE: Level2 (placeholder)
+     ********************************************************************/
+    class Level2 extends Phaser.Scene {
+      constructor() { super('Level2'); }
+
+      create() {
+        // --- Background "room" ---
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH, GAME.HEIGHT, 0xe9e6ff);
+        this.add.rectangle(GAME.WIDTH / 2, GAME.HEIGHT / 2, GAME.WIDTH - 40, GAME.HEIGHT - 40, 0xffffff, 0.55);
+
+        // Controls + UI
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+        this.dialogue = new DialogueUI(this);
+        this.prompt = new PromptUI(this, 'Press Space');
+
+        this.hintText = this.add.text(12, 10, 'Rescue Nori • Avoid the tuxedo cats', {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#2b2b2b'
+        }).setDepth(GAME.UI_DEPTH);
+
+        // Walls (keep player in room)
+        this.walls = buildWorldBoundsWalls(this, 18);
+
+        // --- Sarah ---
+        const sarahSprite = this.physics.add.sprite(GAME.WIDTH / 2, GAME.HEIGHT - 50, 'sarah_south');
+        sarahSprite.setCollideWorldBounds(true);
+        this.physics.add.collider(sarahSprite, this.walls);
+        this.sarah = new Character8Dir(this, sarahSprite, 'sarah', 'south');
+
+        // --- Zoe follows Sarah ---
+        const zoeSprite = this.physics.add.sprite(GAME.WIDTH / 2 - 40, GAME.HEIGHT - 30, 'zoe_south');
+        zoeSprite.body.setAllowGravity(false);
+        zoeSprite.setImmovable(true);
+        this.zoe = new Character8Dir(this, zoeSprite, 'zoe', 'south');
+
+        this.follow = new FollowController(this, this.zoe, this.sarah.sprite, {
+          speed: 150,
+          stopDist: 44
+        });
+        this.follow.setEnabled(true);
+
+        this.spawnTimers = [];
+
+
+
+        // --- Nori at the far end (goal) ---
+        this.nori = this.physics.add.sprite(GAME.WIDTH / 2, 60, 'nori_south');
+        this.nori.body.setAllowGravity(false);
+        this.nori.setImmovable(true);
+
+        // little label
+        this.add.text(GAME.WIDTH / 2 - 20, 30, 'NORI', {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#444'
+        });
+
+                // Nori follows Zoe (disabled until rescued)
+        this.noriChar = new Character8Dir(this, this.nori, 'nori', 'south');
+
+        this.noriFollow = new FollowController(this, this.noriChar, this.zoe.sprite, {
+          speed: 140,
+          stopDist: 52
+        });
+        this.noriFollow.setEnabled(false);
+
+        // Goal zone around Nori
+        this.goalZone = this.add.zone(this.nori.x, this.nori.y, 44, 44);
+        this.physics.add.existing(this.goalZone, true);
+
+        // --- Tuxedo cat "traffic" lanes ---
+        this.tuxes = this.physics.add.group({ allowGravity: false, immovable: true });
+
+
+
+        // lanes (y positions) + speeds
+        this.lanes = [
+          { y: 105, speed: 140, dir:  1, minDelay: 450, maxDelay: 800 },
+          { y: 135, speed: 200, dir:  1, minDelay: 225, maxDelay: 450 },
+          { y: 195, speed: 210, dir: -1, minDelay: 200, maxDelay: 400 },
+          { y: 255, speed: 245, dir:  1, minDelay: 235, maxDelay: 500 },
+          { y: 300, speed: 140, dir:  1, minDelay: 450, maxDelay: 800 }          
+        ];
+
+        this.maxInLane = 2; // try 2 for harder; set 1 for easier
+
+        for (const lane of this.lanes) {
+          for (let i = 0; i < this.maxInLane; i++) {
+            const tux = this.spawnTuxInLane(lane);
+
+
+
+
+            // Stagger starting positions so they aren’t stacked
+            // (spread across the screen a bit)
+            tux.x = (lane.dir === 1)
+              ? Phaser.Math.Between(-120, GAME.WIDTH)
+              : Phaser.Math.Between(0, GAME.WIDTH + 120);
+
+            // Each tux gets a "gap" before it re-enters after wrapping
+            tux.wrapGap = Phaser.Math.Between(80, 220) + i * 140;
+          }
+        }
+
+
+        // this.spawnTimers = []; // keep references so we can stop them later
+
+        // for (const lane of this.lanes) {
+        //   const scheduleNext = () => {
+        //     if (this.rescued) return; // don't schedule after rescue
+        //     const delay = Phaser.Math.Between(lane.minDelay, lane.maxDelay);
+
+        //     const timer = this.time.delayedCall(delay, () => {
+        //       if (this.rescued) return;
+        //       this.spawnTuxInLane(lane);
+        //       scheduleNext();
+        //     });
+
+        //     this.spawnTimers.push(timer);
+        //   };
+
+        //   scheduleNext();
+        // }
+
+
+
+
+
+
+
+        // Hit detection: Sarah vs tuxedo cats
+        this.physics.add.overlap(this.sarah.sprite, this.tuxes, this.onHitTux, null, this);
+
+        // Win detection: Sarah reaches Nori zone
+        this.rescued = false;
+        this.exitActive = false;
+        this.physics.add.overlap(this.sarah.sprite, this.goalZone, () => {
+          if (this.rescued) return;
+          this.rescued = true;
+          this.onRescueNori();
+        });
+
+        // Exit objects (created on rescue)
+        this.exitZone = null;
+        this.exitMarker = null;
+        this.exitText = null;
+
+        // Start positions (for reset)
+        this.startPos = { x: GAME.WIDTH / 2, y: GAME.HEIGHT - 50 };
+      }
+
+      onHitTux() {
+        if (this.rescued) return; // don't punish after win
+        this.hintText.setText('BONK! Tuxedo cat chaos. Back to start.');
+        this.time.delayedCall(700, () => {
+          if (!this.dialogue.isOpen) this.hintText.setText('Rescue Nori • Avoid the tuxedo cats');
+        });
+
+        // reset Sarah and Zoe
+        this.sarah.sprite.setPosition(this.startPos.x, this.startPos.y);
+        this.sarah.sprite.setVelocity(0);
+
+        this.zoe.sprite.setPosition(this.startPos.x - 40, this.startPos.y + 20);
+        this.zoe.sprite.setVelocity(0);
+
+        this.sarah.setDirection('south');
+        this.zoe.setDirection('south');
+      }
+
+      onRescueNori() {
+
+        // if (this.rescued) return;
+        // this.rescued = true;
+
+
+        // Stop future spawns
+        if (this.spawnTimers && Array.isArray(this.spawnTimers)) {
+          this.spawnTimers.forEach(t => t && t.remove(false));
+          this.spawnTimers = [];
+        }
+
+
+        // Remove existing tuxedo cats
+        this.tuxes.clear(true, true);
+
+        this.dialogue.open("You rescued Nori!\n\nSarah: Nori!!\nNori: meow.");
+        this.time.delayedCall(1200, () => {
+          this.dialogue.close();
+          this.spawnExit();
+          this.hintText.setText('Go to EXIT ▶');
+        });
+
+        this.noriFollow.setEnabled(true);
+
+      }
+
+      spawnExit() {
+        if (this.exitActive) return;
+        this.exitActive = true;
+
+        const x = GAME.WIDTH / 2;
+        const y = GAME.HEIGHT - 26;
+
+        this.exitZone = this.add.zone(x, y, 100, 55);
+        this.physics.add.existing(this.exitZone, true);
+
+        this.exitMarker = this.add.rectangle(x, y, 90, 28, 0x2a7b3f, 0.85).setDepth(GAME.UI_DEPTH - 2);
+        this.exitText = this.add.text(x - 34, y - 8, 'EXIT ▶', {
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          color: '#ffffff'
+        }).setDepth(GAME.UI_DEPTH - 1);
+
+        this.physics.add.overlap(this.sarah.sprite, this.exitZone, () => {
+          // next level later — for now, restart Level2 or go back to Level1
+          // this.scene.start('Level3');
+          this.scene.start('Level3'); // placeholder until Level3 exists
+        });
+      }
+
+      
+
+      update() {
+        const now = this.time.now;
+
+        if (this.dialogue.isOpen) {
+          this.sarah.sprite.setVelocity(0);
+          this.prompt.hide();
+          return;
+        }
+
+        // Sarah movement
+        const { vx, vy } = applyTopDownMovement(this.sarah.sprite, this.cursors, GAME.PLAYER_SPEED);
+        this.sarah.setDirection(get8DirFromVelocity(vx, vy));
+
+        // Zoe follows Sarah
+        this.follow.update();
+        if (this.rescued) this.noriFollow.update();
+
+        // Move tuxedo cats
+        this.tuxes.children.iterate((tux) => {
+          if (!tux) return;
+
+          tux.x += tux.laneDir * tux.laneSpeed * (this.game.loop.delta / 1000);
+
+          // When offscreen, wrap to the other side with a random gap.
+          if (tux.laneDir === 1 && tux.x > GAME.WIDTH + 60) {
+            tux.x = -60 - tux.wrapGap;
+            tux.wrapGap = Phaser.Math.Between(90, 260);
+          }
+
+          if (tux.laneDir === -1 && tux.x < -60) {
+            tux.x = GAME.WIDTH + 60 + tux.wrapGap;
+            tux.wrapGap = Phaser.Math.Between(90, 260);
+          }
+        });
+
+
+      }
+
+            spawnTuxInLane(lane) {
+              const startX = (lane.dir === 1) ? -40 : (GAME.WIDTH + 40);
+              const key = (lane.dir === 1) ? 'tuxedocat_east' : 'tuxedocat_west';
+
+              const tux = this.physics.add.sprite(startX, lane.y, key);
+              tux.body.setAllowGravity(false);
+              tux.setImmovable(true);
+
+              // Tighter hitbox (does NOT change visual sprite size)
+              const bw = Math.floor(tux.width * 0.55);
+              const bh = Math.floor(tux.height * 0.45);
+              tux.body.setSize(bw, bh, true); // true centers the hitbox
+
+              tux.laneSpeed = lane.speed;
+              tux.laneDir = lane.dir;
+              tux.laneY = lane.y;
+
+              // for wrap behavior
+              tux.wrapGap = Phaser.Math.Between(90, 240);
+
+              this.tuxes.add(tux);
+              return tux;
+            }
+
+      //     spawnTuxInLane(lane) {
+      //     // Don’t spawn if there’s already a tux in this lane (keeps clutter low)
+      //     const countInLane = this.tuxes.getChildren().filter(t => t && t.laneY === lane.y).length;
+      //     const maxInLane = 2; // was effectively 1
+      //     if (countInLane >= maxInLane) return;
+
+
+      //     const startX = (lane.dir === 1) ? -40 : (GAME.WIDTH + 40);
+      //     const key = (lane.dir === 1) ? 'tuxedocat_east' : 'tuxedocat_west';
+
+      //     const tux = this.physics.add.sprite(startX, lane.y, key);
+      //     tux.body.setAllowGravity(false);
+      //     tux.setImmovable(true);
+
+      //     tux.laneSpeed = lane.speed;
+      //     tux.laneDir = lane.dir;
+      //     tux.laneY = lane.y;
+
+      //     this.tuxes.add(tux);
+      // }
+    }
+
+
+    /********************************************************************
+     * SCENE: Level1
+     ********************************************************************/
+    class Level1 extends Phaser.Scene {
+      constructor() { super('Level1'); }
+
+      create() {
+        // WORLD
+        buildSnowGround(this);
+        buildFootsteps(this);
+
+        // Move top fence DOWN so hint text never overlaps it.
+        const fence = buildFence(this, { topY: 42 });
+
+        // Snowfall
+        startSnowfall(this);
+
+        // Physics boundaries:
+        // Increase top wall thickness so player can't go above the lowered top fence.
+        this.walls = buildWorldBoundsWalls(this, 18, fence.topY);
+
+        // UI (depth ensures always on top)
+        this.dialogue = new DialogueUI(this);
+        this.prompt = new PromptUI(this, 'Press Space');
+
+        this.hintText = this.add.text(12, 10, 'Arrow keys to move • Catch Zoe • Avoid the poop', {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#2b2b2b'
+        }).setDepth(GAME.UI_DEPTH);
+
+        // Controls
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+        // PLAYER (Sarah)
+        const playerSprite = this.physics.add.sprite(120, 220, 'sarah_south');
+        playerSprite.setCollideWorldBounds(true);
+        this.physics.add.collider(playerSprite, this.walls);
+        this.player = new Character8Dir(this, playerSprite, 'sarah', 'south');
+
+        // DOG (Zoe)
+        const zoeSprite = this.physics.add.sprite(560, 280, 'zoe_south');
+        zoeSprite.body.setAllowGravity(false);
+        zoeSprite.setImmovable(true);
+        this.zoe = new Character8Dir(this, zoeSprite, 'zoe', 'south');
+
+        // POOP HAZARD (try emoji texture; fallback to prototype)
+        const poopKey = this.textures.exists('poop_emoji') ? 'poop_emoji' : 'poop_proto';
+        this.poop = new PoopHazard(this, this.player.sprite, (msg) => {
+          this.hintText.setText(msg);
+          this.time.delayedCall(700, () => {
+            if (!this.dialogue.isOpen) {
+              this.hintText.setText('Arrow keys to move • Catch Zoe • Avoid the poop');
+            }
+          });
+        }, poopKey);
+
+        // CHASE ROUTE
+        const dogSpots = [
+          { x: 560, y: 280 },
+          { x: 540, y: 80 },
+          { x: 380, y: 110 },
+          { x: 250, y: 90 },
+          { x: 120, y: 140 },
+          { x: 210, y: 260 },
+          { x: 460, y: 230 } // final catch spot
+        ];
+        this.chase = new ChaseController(this, this.zoe, this.player.sprite, this.poop, {
+          spots: dogSpots,
+          triggerRadius: 80,
+          catchRadius: 75,
+          pixelsPerSecond: 260,
+          cooldownMs: 250
+        });
+
+        // FOLLOW (disabled until catch sequence completes)
+        this.follow = new FollowController(this, this.zoe, this.player.sprite, {
+          speed: 150,
+          stopDist: 44
+        });
+
+        
+
+        // Exit (hidden until after the catch sequence)
+        this.exitActive = false;
+        this.exitZone = null;
+        this.exitMarker = null;
+        this.exitText = null;
+
+        // Catch sequence state
+        this.levelState = 'chasing'; // 'chasing' | 'catch_seq' | 'free_roam_exit'
+        this.levelComplete = false;
+      }
+
+      spawnExitAtGate() {
+        if (this.exitActive) return;
+        this.exitActive = true;
+
+        const x = GAME.WIDTH / 2;
+        const y = GAME.HEIGHT - 26;
+
+        // Physics zone
+        this.exitZone = this.add.zone(x, y, 90, 50);
+        this.physics.add.existing(this.exitZone, true);
+
+        // Visual marker (simple)
+        this.exitMarker = this.add.rectangle(x, y, 90, 28, 0x2a7b3f, 0.85).setDepth(GAME.UI_DEPTH - 2);
+        this.exitText = this.add.text(x - 34, y - 8, 'EXIT ▶', {
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          color: '#ffffff'
+        }).setDepth(GAME.UI_DEPTH - 1);
+
+        // Overlap to go next level
+        this.physics.add.overlap(this.player.sprite, this.exitZone, () => {
+          if (!this.exitActive) return;
+          this.scene.start('Level2');
+        });
+      }
+
+      doZoeCircleRun() {
+        const cx = this.zoe.sprite.x;
+        const cy = this.zoe.sprite.y;
+
+        const radius = 24;
+        const steps = 12;
+        const durationPerStep = 70;
+
+        // Precompute circle points
+        const points = [];
+        for (let i = 0; i < steps; i++) {
+          const a = (i / steps) * Math.PI * 2;
+          points.push({
+            x: cx + Math.cos(a) * radius,
+            y: cy + Math.sin(a) * radius
+          });
+        }
+
+        let i = 0;
+
+        const stepToNext = () => {
+          if (i >= points.length) {
+            // Finished the circle
+            this.levelState = 'free_roam_exit';
+            this.follow.setEnabled(true);
+            this.spawnExitAtGate();
+
+            this.hintText.setText('Find the EXIT ▶ (Zoe is following you now)');
+            this.time.delayedCall(1200, () => {
+              if (!this.dialogue.isOpen) {
+                this.hintText.setText('Arrow keys to move • Go to EXIT ▶');
+              }
+            });
+
+            return;
+          }
+
+          const next = points[i];
+
+          // Face Zoe toward the next point
+          const dvx = next.x - this.zoe.sprite.x;
+          const dvy = next.y - this.zoe.sprite.y;
+          const dir = get8DirFromVelocity(dvx, dvy);
+          if (dir) this.zoe.setDirection(dir);
+
+          this.tweens.add({
+            targets: this.zoe.sprite,
+            x: next.x,
+            y: next.y,
+            duration: durationPerStep,
+            ease: 'Linear',
+            onComplete: () => {
+              i += 1;
+              stepToNext();
+            }
+          });
+        };
+
+        stepToNext();
+      }
+
+
+
+      update() {
+        const now = this.time.now;
+
+        // Dialogue pauses player movement
+        if (this.dialogue.isOpen) {
+          this.player.sprite.setVelocity(0);
+          this.prompt.hide();
+          return;
+        }
+
+        // Poop freeze pauses player movement
+        if (this.poop.isFrozen(now)) {
+          this.player.sprite.setVelocity(0);
+          this.prompt.hide();
+          return;
+        }
+
+        // If we're in the catch sequence, freeze Sarah (let Zoe do her thing)
+        if (this.levelState === 'catch_seq') {
+          this.player.sprite.setVelocity(0);
+          this.prompt.hide();
+          return;
+        }
+
+        // Player movement
+        const { vx, vy } = applyTopDownMovement(this.player.sprite, this.cursors, GAME.PLAYER_SPEED);
+        this.player.setDirection(get8DirFromVelocity(vx, vy));
+
+        // Chase or follow
+        if (this.levelState === 'chasing') {
+          this.chase.update();
+        } else if (this.levelState === 'free_roam_exit') {
+          this.follow.update();
+        }
+
+        // Catch interaction only on final spot (during chasing)
+        if (this.levelState === 'chasing' && !this.levelComplete && this.chase.isOnFinalSpot()) {
+          const dist = this.chase.distanceToPlayer();
+          if (dist < 75) {
+            this.prompt.show(this.zoe.sprite.x - 40, this.zoe.sprite.y - 55);
+
+            if (Phaser.Input.Keyboard.JustDown(this.keySpace)) {
+              // Mark caught
+              this.levelComplete = true;
+              this.chase.caught = true;
+              this.prompt.hide();
+
+              // Dialogue you requested
+              this.dialogue.open("You caught Zoe.\n\nSarah: Zoe ACK!");
+
+              // Close dialogue after a moment, then Zoe runs in a circle, then exit appears and Zoe follows
+              this.levelState = 'catch_seq';
+              this.time.delayedCall(1100, () => {
+                this.dialogue.close();
+                this.doZoeCircleRun();
+              },null,this);
+            }
+            return;
+          }
+        }
+
+        this.prompt.hide();
+      }
+    }
+
+    /********************************************************************
+     * GAME BOOTSTRAP
+     ********************************************************************/
+    const config = {
+      type: Phaser.AUTO,
+      width: GAME.WIDTH,
+      height: GAME.HEIGHT,
+      pixelArt: true,
+      roundPixels: true,
+      physics: { default: 'arcade', arcade: { debug: false } },
+      scene: [BootScene, MenuScene, IntroScene, Level1, Level2, Level3, TravelCutscene, FinalKiss, EndMenu, GalleryScene]
+    };
+
+    new Phaser.Game(config);
+  </script>
+</body>
+</html>
