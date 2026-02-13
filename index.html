@@ -1248,7 +1248,7 @@
         // Intro
         this.activePlay = false;
         this.dialogue.open("Warah Sylie: Not so fast.");
-        this.time.delayedCall(2500, () => {
+        this.time.delayedCall(2000, () => {
           this.dialogue.open("Sarah: ...what are you doing?\nWarah Sylie: Heart capture. Winner goes to Montreal.");
         });
         this.time.delayedCall(2400, () => {
@@ -1256,7 +1256,6 @@
           this.activePlay = true;
         });
       }
-
       getHudText() {
         // Cute scoreboard
         const s = '♥'.repeat(this.sarahScore) + '·'.repeat(Math.max(0, this.goal - this.sarahScore));
@@ -2049,4 +2048,5 @@
   </script>
 </body>
 </html>
+
 
